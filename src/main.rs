@@ -1,4 +1,5 @@
 use clap::{Parser, Subcommand};
+use rusqlite::Connection;
 
 ///A command line todo app
 #[derive(Debug, Parser)]
@@ -18,17 +19,82 @@ enum Commands {
         task: String,
     },
     /// List all todo items
-    List {},
+    List,
+
+    /// Remove todo list item
+    #[command(arg_required_else_help = true)]
+    Remove {
+        /// Id of task to remove
+        id: i32,
+    },
+}
+
+struct Task {
+    id: u32,
+    info: String,
 }
 
 fn main() {
-    let args = Cli::parse();
-    match args.command {
+    let conn = Connection::open_in_memory().expect("Could not open connection");
+    conn.execute(
+        // NOT NULL
+        // UNIQUE
+        // CHECK
+        // DEFAULT
+        "CREATE TABLE tasks (
+            id INTEGER PRIMARY KEY,
+            info TEXT NOT NULL UNIQUE CHECK(info != ''),
+            deleted BOOLEAN NOT NULL DEFAULT false CHECK(deleted in (0, 1))
+        )",
+        (),
+    )
+    .expect("Was not able to create table");
+
+    // for testing
+    [
+        "Buy groceries",
+        "Clean the house",
+        "Finish Rust project",
+        "Read a book",
+        "Go for a run",
+    ]
+    .iter()
+    .for_each(|task| {
+        conn.execute("INSERT INTO tasks (info) VALUES (?1)", [task])
+            .expect("Could not insert task");
+    });
+
+    match Cli::parse().command {
         Commands::Add { task } => {
-            println!("todo add {}", task)
+            conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
+                .expect("Was not able to insert task");
+            println!("Adding task: {task}")
         }
-        Commands::List {} => {
-            println!("todo list")
+        Commands::List => {
+            let mut stmt = conn
+                .prepare("SELECT id, info FROM tasks WHERE deleted = false")
+                .unwrap();
+            let task_iter = stmt
+                .query_map([], |row| {
+                    Ok(Task {
+                        id: row.get(0).unwrap(),
+                        info: row.get(1).unwrap(),
+                    })
+                })
+                .unwrap();
+
+            println!("Tasks:");
+            for task in task_iter {
+                let task = task.unwrap();
+                println!("{}: {}", task.id, task.info)
+            }
+        }
+        Commands::Remove { id } => {
+            let mut stmt = conn
+                .prepare("UPDATE tasks SET deleted = true WHERE id = ?1 RETURNING info")
+                .unwrap();
+            let task_info: String = stmt.query_row([id], |row| Ok(row.get(0).unwrap())).unwrap();
+            println!("Deleted task: \"{task_info}\"")
         }
     }
 }
@@ -162,3 +228,14 @@ fn main() {
 // }
 
 // Continued program logic goes here...
+
+// let person_iter = stmt.query_map([], |row| {
+//     Ok(Person {
+//         id: row.get(0)?,
+//         name: row.get(1)?,
+//         data: row.get(2)?,
+//     })
+// })?;
+// for person in person_iter {
+//     println!("Found person {:?}", person?);
+// }
