@@ -68,6 +68,20 @@ fn main() {
     )
     .expect("Was not able to create tables");
 
+    // for testing
+    [
+        "Buy groceries",
+        "Clean the house",
+        "Finish Rust project",
+        "Read a book",
+        "Go for a run",
+    ]
+    .iter()
+    .for_each(|task| {
+        conn.execute("INSERT INTO tasks (info) VALUES (?1)", [task])
+            .expect("Could not insert task");
+    });
+
     match Cli::parse().command {
         Commands::Add { task } => {
             conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
@@ -107,13 +121,28 @@ fn main() {
         }
         Commands::ListCat => {
             let mut stmt = conn.prepare("SELECT name FROM tasks").unwrap();
-            let cat_iter = stmt.query_map([], |row| Ok(row.get(0).unwrap())).unwrap();
-            println!("Categories:");
-            for cat in cat_iter {
-                let cat: String = cat.unwrap();
-                println!("- {}", cat)
-            }
-        }
+            let cat_iter = stmt.query_map([], |row| {
+                Ok(row.get(0).unwrap(0))
+            })
+        } // Commands::List => {
+          //     let mut stmt = conn
+          //         .prepare("SELECT id, info FROM tasks WHERE done = false")
+          //         .unwrap();
+          //     let task_iter = stmt
+          //         .query_map([], |row| {
+          //             Ok(Task {
+          //                 id: row.get(0).unwrap(),
+          //                 info: row.get(1).unwrap(),
+          //             })
+          //         })
+          //         .unwrap();
+          //
+          //     println!("Tasks:");
+          //     for task in task_iter {
+          //         let task = task.unwrap();
+          //         println!("{}: {}", task.id, task.info)
+          //     }
+          // }
     }
 }
 
