@@ -24,30 +24,13 @@ enum Commands {
     },
 
     /// List all todo items
-    List,
+    List, // make it list categoies too?
 
     /// Finish todo list item
     #[command(arg_required_else_help = true)]
-    Done {
+    Edit {
         /// Id of task to finish
         id: i32,
-    },
-
-    /// Add a category
-    #[command(arg_required_else_help = true)]
-    AddCat {
-        /// Category to add
-        category: String,
-    },
-
-    /// List categories
-    ListCat,
-
-    /// Remove a category
-    #[command(arg_required_else_help = true)]
-    RemoveCat {
-        /// Category to add
-        category: String,
     },
 }
 
@@ -55,6 +38,7 @@ enum Commands {
 
 fn main() {
     let conn = Connection::open_in_memory().expect("Could not open connection");
+
     conn.execute(
         "
         CREATE TABLE categories (
@@ -63,7 +47,8 @@ fn main() {
         )",
         (),
     )
-    .expect("Was not able to create tables");
+    .unwrap();
+
     conn.execute(
         "CREATE TABLE tasks (
             id INTEGER PRIMARY KEY,
@@ -74,76 +59,59 @@ fn main() {
         )",
         (),
     )
-    .expect("Was not able to create tables");
+    .unwrap();
 
     match Cli::parse().command {
-        Commands::Add { task, category } => {}
-        Commands::List => {}
-        Commands::Done { id } => {}
-        Commands::AddCat { category } => {}
-        Commands::ListCat => {}
-        Commands::RemoveCat { category } => {}
+        Commands::Add { task, category } => {
+            let category = category.unwrap_or("No Category".to_string());
+            conn.execute(
+                "INSERT OR IGNORE INTO categories (name) VALUES (?1)",
+                [&category],
+            )
+            .unwrap();
+            conn.execute(
+                "INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))",
+                [&task, &category],
+            )
+            .unwrap();
+        }
+        Commands::List => {
+            struct Task {
+                id: u32,
+                info: String,
+                category: String,
+            }
+            let mut stmt = conn
+                .prepare(
+                    "
+                    SELECT
+                        tasks.id,
+                        tsks.info,
+                        categories.name
+                    FROM tasks
+                    LEFT JOIN categories ON tasks.category = categories.id
+                    WHERE done == false",
+                )
+                .unwrap();
+            let task_iter = stmt
+                .query_map((), |row| {
+                    Ok(Task {
+                        id: row.get(0).unwrap(),
+                        info: row.get(1).unwrap(),
+                        category: row.get(2).unwrap(),
+                    })
+                })
+                .unwrap();
+            println!("Tasks:");
+            for task in task_iter {
+                let task = task.unwrap();
+                println!("{}: {}: {}", task.id, task.category, task.info)
+            }
+        }
+        Commands::Edit { id } => {
+            println!("Edited the problem: {id}")
+        }
     }
-
-    // match Cli::parse().command {
-    //     Commands::Add { task } => {
-    //         // TODO: insert the category too?
-    //         conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
-    //             .expect("Was not able to insert task");
-    //         println!("Adding task: {task}")
-    //     }
-    //     Commands::List => {
-    //         struct Task {
-    //             id: u32,
-    //             info: String,
-    //         }
-    //         let mut stmt = conn
-    //             // TODO: PRINT THE cat too
-    //             .prepare("SELECT id, info FROM tasks WHERE done = false")
-    //             .unwrap();
-    //         let task_iter = stmt
-    //             .query_map([], |row| {
-    //                 Ok(Task {
-    //                     id: row.get(0).unwrap(),
-    //                     info: row.get(1).unwrap(),
-    //                 })
-    //             })
-    //             .unwrap();
-    //
-    //         println!("Tasks:");
-    //         for task in task_iter {
-    //             let task = task.unwrap();
-    //             println!("{}: {}", task.id, task.info)
-    //         }
-    //     }
-    //     Commands::Done { id } => {
-    //         let mut stmt = conn
-    //             .prepare("UPDATE tasks SET done = true WHERE id = ?1 RETURNING info")
-    //             .unwrap();
-    //         let task_info: String = stmt.query_row([id], |row| Ok(row.get(0).unwrap())).unwrap();
-    //         println!("Finished task: \"{task_info}\"")
-    //     }
-    //     Commands::AddCat { category } => {
-    //         conn.execute("INSERT INTO categories (name) VALUES (?1)", [&category])
-    //             .unwrap();
-    //         println!("Inserting cat: {category}")
-    //     }
-    //     Commands::ListCat => {
-    //         // fix this query??
-    //         let mut stmt = conn.prepare("SELECT name FROM tasks").unwrap();
-    //         let cat_iter = stmt.query_map([], |row| Ok(row.get(0).unwrap())).unwrap();
-    //         println!("Categories:");
-    //         for cat in cat_iter {
-    //             let cat: String = cat.unwrap();
-    //             println!("- {}", cat)
-    //         }
-    //     }
-    //     Commands::RemoveCat { category: _ } => {
-    //         // todo: remove category
-    //         // set all problems with this cat to null
-    //     }
-    // }
-    //
 }
 
 // Diff {
