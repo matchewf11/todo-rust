@@ -17,6 +17,10 @@ enum Commands {
     Add {
         /// Task to add
         task: String,
+
+        ///  Category of the task
+        #[arg(short, long)]
+        category: Option<String>,
     },
 
     /// List all todo items
@@ -38,26 +42,19 @@ enum Commands {
 
     /// List categories
     ListCat,
+
+    /// Remove a category
+    #[command(arg_required_else_help = true)]
+    RemoveCat {
+        /// Category to add
+        category: String,
+    },
 }
 
 // combine add to add category
 
-struct Task {
-    id: u32,
-    info: String,
-}
-
 fn main() {
     let conn = Connection::open_in_memory().expect("Could not open connection");
-    conn.execute(
-        "CREATE TABLE tasks (
-            id INTEGER PRIMARY KEY,
-            info TEXT NOT NULL UNIQUE CHECK(info != ''),
-            done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1))
-        )",
-        (),
-    )
-    .expect("Was not able to create tables");
     conn.execute(
         "
         CREATE TABLE categories (
@@ -67,54 +64,86 @@ fn main() {
         (),
     )
     .expect("Was not able to create tables");
+    conn.execute(
+        "CREATE TABLE tasks (
+            id INTEGER PRIMARY KEY,
+            info TEXT NOT NULL UNIQUE CHECK(info != ''),
+            done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1)),
+            category INTEGER,
+            FOREIGN KEY(category) REFERENCES categories(id)
+        )",
+        (),
+    )
+    .expect("Was not able to create tables");
 
     match Cli::parse().command {
-        Commands::Add { task } => {
-            conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
-                .expect("Was not able to insert task");
-            println!("Adding task: {task}")
-        }
-        Commands::List => {
-            let mut stmt = conn
-                .prepare("SELECT id, info FROM tasks WHERE done = false")
-                .unwrap();
-            let task_iter = stmt
-                .query_map([], |row| {
-                    Ok(Task {
-                        id: row.get(0).unwrap(),
-                        info: row.get(1).unwrap(),
-                    })
-                })
-                .unwrap();
-
-            println!("Tasks:");
-            for task in task_iter {
-                let task = task.unwrap();
-                println!("{}: {}", task.id, task.info)
-            }
-        }
-        Commands::Done { id } => {
-            let mut stmt = conn
-                .prepare("UPDATE tasks SET done = true WHERE id = ?1 RETURNING info")
-                .unwrap();
-            let task_info: String = stmt.query_row([id], |row| Ok(row.get(0).unwrap())).unwrap();
-            println!("Finished task: \"{task_info}\"")
-        }
-        Commands::AddCat { category } => {
-            conn.execute("INSERT INTO categories (name) VALUES (?1)", [&category])
-                .unwrap();
-            println!("Inserting cat: {category}")
-        }
-        Commands::ListCat => {
-            let mut stmt = conn.prepare("SELECT name FROM tasks").unwrap();
-            let cat_iter = stmt.query_map([], |row| Ok(row.get(0).unwrap())).unwrap();
-            println!("Categories:");
-            for cat in cat_iter {
-                let cat: String = cat.unwrap();
-                println!("- {}", cat)
-            }
-        }
+        Commands::Add { task, category } => {}
+        Commands::List => {}
+        Commands::Done { id } => {}
+        Commands::AddCat { category } => {}
+        Commands::ListCat => {}
+        Commands::RemoveCat { category } => {}
     }
+
+    // match Cli::parse().command {
+    //     Commands::Add { task } => {
+    //         // TODO: insert the category too?
+    //         conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
+    //             .expect("Was not able to insert task");
+    //         println!("Adding task: {task}")
+    //     }
+    //     Commands::List => {
+    //         struct Task {
+    //             id: u32,
+    //             info: String,
+    //         }
+    //         let mut stmt = conn
+    //             // TODO: PRINT THE cat too
+    //             .prepare("SELECT id, info FROM tasks WHERE done = false")
+    //             .unwrap();
+    //         let task_iter = stmt
+    //             .query_map([], |row| {
+    //                 Ok(Task {
+    //                     id: row.get(0).unwrap(),
+    //                     info: row.get(1).unwrap(),
+    //                 })
+    //             })
+    //             .unwrap();
+    //
+    //         println!("Tasks:");
+    //         for task in task_iter {
+    //             let task = task.unwrap();
+    //             println!("{}: {}", task.id, task.info)
+    //         }
+    //     }
+    //     Commands::Done { id } => {
+    //         let mut stmt = conn
+    //             .prepare("UPDATE tasks SET done = true WHERE id = ?1 RETURNING info")
+    //             .unwrap();
+    //         let task_info: String = stmt.query_row([id], |row| Ok(row.get(0).unwrap())).unwrap();
+    //         println!("Finished task: \"{task_info}\"")
+    //     }
+    //     Commands::AddCat { category } => {
+    //         conn.execute("INSERT INTO categories (name) VALUES (?1)", [&category])
+    //             .unwrap();
+    //         println!("Inserting cat: {category}")
+    //     }
+    //     Commands::ListCat => {
+    //         // fix this query??
+    //         let mut stmt = conn.prepare("SELECT name FROM tasks").unwrap();
+    //         let cat_iter = stmt.query_map([], |row| Ok(row.get(0).unwrap())).unwrap();
+    //         println!("Categories:");
+    //         for cat in cat_iter {
+    //             let cat: String = cat.unwrap();
+    //             println!("- {}", cat)
+    //         }
+    //     }
+    //     Commands::RemoveCat { category: _ } => {
+    //         // todo: remove category
+    //         // set all problems with this cat to null
+    //     }
+    // }
+    //
 }
 
 // Diff {
@@ -243,17 +272,4 @@ fn main() {
 //     Commands::External(args) => {
 //         println!("Calling out to {:?} with {:?}", &args[0], &args[1..]);
 //     }
-// }
-
-// Continued program logic goes here...
-
-// let person_iter = stmt.query_map([], |row| {
-//     Ok(Person {
-//         id: row.get(0)?,
-//         name: row.get(1)?,
-//         data: row.get(2)?,
-//     })
-// })?;
-// for person in person_iter {
-//     println!("Found person {:?}", person?);
 // }
