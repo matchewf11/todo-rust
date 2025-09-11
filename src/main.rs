@@ -26,22 +26,31 @@ enum Commands {
     /// List all todo items
     List, // make it list categoies too?
 
-    /// Finish todo list item
+    /// Edit todo list item
     #[command(arg_required_else_help = true)]
     Edit {
         /// Id of task to finish
         id: i32,
+
+        /// Problem is finished
+        #[arg(short, long, action = clap::ArgAction::SetTrue)]
+        finished: bool,
     },
 }
 
+// time
+// chrono
+
 // combine add to add category
 
+// i want to accept 11 (assume it is <today if it is 11>, the next 11) 2-11 or 02-11 (assume it is the next feb 11) 2025-2-11 or 25-2-11 or (abosultue day) all of these strings in rust and i want to parse it into sqlite date format also accept / instead of -
+
 fn main() {
-    let conn = Connection::open_in_memory().expect("Could not open connection");
+    let conn = Connection::open("./todo.db").unwrap();
 
     conn.execute(
         "
-        CREATE TABLE categories (
+        CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE CHECK(name != '')
         )",
@@ -50,7 +59,7 @@ fn main() {
     .unwrap();
 
     conn.execute(
-        "CREATE TABLE tasks (
+        "CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY,
             info TEXT NOT NULL UNIQUE CHECK(info != ''),
             done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1)),
@@ -86,7 +95,7 @@ fn main() {
                     "
                     SELECT
                         tasks.id,
-                        tsks.info,
+                        tasks.info,
                         categories.name
                     FROM tasks
                     LEFT JOIN categories ON tasks.category = categories.id
@@ -108,8 +117,17 @@ fn main() {
                 println!("{}: {}: {}", task.id, task.category, task.info)
             }
         }
-        Commands::Edit { id } => {
-            println!("Edited the problem: {id}")
+        Commands::Edit { id, finished } => {
+            if finished {
+                let rows_changed = conn
+                    .execute("UPDATE tasks SET done = true WHERE id = ?1", [&id])
+                    .unwrap();
+                if rows_changed == 0 {
+                    println!("Did not edit anything")
+                }
+            } else {
+                println!("Did not edit anything")
+            }
         }
     }
 }
