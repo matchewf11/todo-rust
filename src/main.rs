@@ -219,6 +219,7 @@ fn format_date(date: &str) -> Result<String, &str> {
 
     let today = Local::now().date_naive();
     match (y, m, d) {
+        // wont work past 2100 :(, will fix then
         (Some(year), Some(month), Some(day)) => make_date(
             (if year < 100 { year + 2000 } else { year }) as i32,
             month,
