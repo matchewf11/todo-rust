@@ -1,4 +1,4 @@
-use chrono::NaiveDate;
+use chrono::{Datelike, Local, NaiveDate};
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 
@@ -23,13 +23,13 @@ enum Commands {
         #[arg(short, long)]
         category: Option<String>,
 
-        /// Due date of the task: YYYY/MM/DD or YY/MM/DD
+        /// Task due date: `YYYY-MM-DD`, `MM-DD`, or `DD`. `/` allowed, leading zeros optional.
         #[arg(short, long)]
         due_date: Option<String>,
     },
 
     /// List all todo items
-    List, // make it list categoies too?
+    List,
 
     /// Edit todo list item
     #[command(arg_required_else_help = true)]
@@ -61,7 +61,11 @@ fn main() {
             id INTEGER PRIMARY KEY,
             info TEXT NOT NULL UNIQUE CHECK(info != ''),
             done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1)),
-            due_date TEXT,
+            due_date TEXT CHECK(
+                due_date IS NULL OR 
+                (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
+                    date(due_date) IS NOT NULL)
+            ),
             category INTEGER,
             FOREIGN KEY(category) REFERENCES categories(id)
         )"#,
@@ -145,8 +149,24 @@ fn main() {
             for task in task_iter {
                 let task = task.unwrap();
                 println!(
-                    "{} : {} : {} : {:?} : {:?}",
-                    task.id, task.info, task.done, task.due_date, task.category
+                    "{}. {}{}{}{}",
+                    task.id,
+                    task.info,
+                    if task.done {
+                        " | Finished"
+                    } else {
+                        " | Incomplete"
+                    },
+                    if let Some(d) = task.due_date {
+                        format!(" | Due: {}", d)
+                    } else {
+                        String::new()
+                    },
+                    if let Some(c) = task.category {
+                        format!(" | Category: {}", c)
+                    } else {
+                        String::new()
+                    },
                 )
             }
         }
@@ -165,65 +185,67 @@ fn main() {
     }
 }
 
-fn format_date(date: &str) -> Option<String> {
+// format input into YYYY-MM-DD
+fn format_date(date: &str) -> Result<String, &str> {
     let cleaned = date.trim().replace("/", "-");
     let parts: Vec<_> = cleaned.trim().split('-').collect();
 
-    match parts.len() {
-        3 => {
-            // YYYY-MM-DD
-            // YYYY-M-D
-            // YYYY-M-DD
-            // YYYY-MM-D
-            if let Ok(date) = NaiveDate::parse_from_str(&cleaned, "%Y-%m-%d") {
-                return Some(date.format("%Y-%m-%d").to_string());
-            }
-
-            if let Ok(year) = parts[0].parse::<i32>() {
-                if year > 0 && year < 100 {
-                    let full_year = 2000 + year;
-
-                    let month = match parts[1].parse::<u32>() {
-                        Ok(m) => m,
-                        Err(_) => return None,
-                    };
-
-                    let day = match parts[2].parse::<u32>() {
-                        Ok(d) => d,
-                        Err(_) => return None,
-                    };
-
-                    // YY-MM-DD
-                    // YY-M-DD
-                    // YY-MM-D
-                    // YY-M-D
-                    if let Some(date) = NaiveDate::from_ymd_opt(full_year, month, day) {
-                        return Some(date.format("%Y-%m-%d").to_string());
-                    }
-                } else {
-                    return None;
-                }
-            }
-            None
-        }
-        _ => None, // handle 2 and 1
+    fn parse_part(part: &str, msg: &'static str) -> Result<u32, &'static str> {
+        part.parse().map_err(|_| msg)
     }
 
-    // 2025-09-10 21:13:14.960340156 -07:00
-    // ["2025", "09", "10"]
-    // let now = Local::now();
-    // println!("{}", now);
-    // let parts: Vec<_> = cleaned.split('-').collect();
-    // println!("{:?}", parts);
-    // i want to make all of these into YYYY-MM-DD (if things are ommited assume that they are the
-    // next instanse of that time(assume it is today if possible))
-    // let date = match parts.len() {
-    //     // D or DD
-    //     1 => "",
-    //     // MM-DD
-    //     // M-D
-    //     // M-DD
-    //     // MM-D
+    let (y, m, d) = match parts.len() {
+        3 => (
+            Some(parse_part(parts[0], "Y-M-D invalid year")?),
+            Some(parse_part(parts[1], "Y-M-D invalid month")?),
+            Some(parse_part(parts[2], "Y-M-D invalid day")?),
+        ),
+        2 => (
+            None,
+            Some(parse_part(parts[0], "M-D invalid month")?),
+            Some(parse_part(parts[1], "M-D invalid day")?),
+        ),
+        1 => (None, None, Some(parse_part(parts[0], "D invalid day")?)),
+        _ => return Err("could not parse"),
+    };
+
+    fn make_date(y: i32, m: u32, d: u32) -> Result<String, &'static str> {
+        if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+            Ok(date.format("%Y-%m-%d").to_string())
+        } else {
+            Err("unable to parse date")
+        }
+    }
+
+    let today = Local::now().date_naive();
+    match (y, m, d) {
+        (Some(year), Some(month), Some(day)) => make_date(
+            (if year < 100 { year + 2000 } else { year }) as i32,
+            month,
+            day,
+        ),
+        (None, Some(month), Some(day)) => {
+            if month == today.month() && day == today.day() {
+                make_date(today.year(), month, day)
+            } else {
+                make_date(today.year() + 1, month, day)
+            }
+        }
+        (None, None, Some(day)) => {
+            if day == today.day() {
+                make_date(today.year(), today.month(), day)
+            } else {
+                let today_month = today.month();
+                let (new_year, new_month) = if today_month == 12 {
+                    (today.year() + 1, 1)
+                } else {
+                    (today.year(), today_month + 1)
+                };
+                make_date(new_year, new_month, day)
+            }
+        }
+        _ => Err("cannot parse the date"),
+    }
 }
 
 // Diff {
@@ -354,3 +376,4 @@ fn format_date(date: &str) -> Option<String> {
 //     }
 // }
 //look into chrono for this
+//read env for time zones change time to my time
