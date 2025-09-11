@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use clap::{Parser, Subcommand};
 use rusqlite::Connection;
 
@@ -21,6 +22,10 @@ enum Commands {
         ///  Category of the task
         #[arg(short, long)]
         category: Option<String>,
+
+        /// Due date of the task: YYYY/MM/DD or YY/MM/DD
+        #[arg(short, long)]
+        due_date: Option<String>,
     },
 
     /// List all todo items
@@ -38,83 +43,111 @@ enum Commands {
     },
 }
 
-// time
-// chrono
-
-// combine add to add category
-
-// i want to accept 11 (assume it is <today if it is 11>, the next 11) 2-11 or 02-11 (assume it is the next feb 11) 2025-2-11 or 25-2-11 or (abosultue day) all of these strings in rust and i want to parse it into sqlite date format also accept / instead of -
-
 fn main() {
     let conn = Connection::open("./todo.db").unwrap();
 
     conn.execute(
-        "
+        r#"
         CREATE TABLE IF NOT EXISTS categories (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             name TEXT NOT NULL UNIQUE CHECK(name != '')
-        )",
+        )"#,
         (),
     )
     .unwrap();
 
     conn.execute(
-        "CREATE TABLE IF NOT EXISTS tasks (
+        r#"CREATE TABLE IF NOT EXISTS tasks (
             id INTEGER PRIMARY KEY,
             info TEXT NOT NULL UNIQUE CHECK(info != ''),
             done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1)),
+            due_date TEXT,
             category INTEGER,
             FOREIGN KEY(category) REFERENCES categories(id)
-        )",
+        )"#,
         (),
     )
     .unwrap();
 
     match Cli::parse().command {
-        Commands::Add { task, category } => {
-            let category = category.unwrap_or("No Category".to_string());
-            conn.execute(
-                "INSERT OR IGNORE INTO categories (name) VALUES (?1)",
-                [&category],
-            )
-            .unwrap();
-            conn.execute(
-                "INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))",
-                [&task, &category],
-            )
-            .unwrap();
-        }
+        Commands::Add {
+            task,
+            category,
+            due_date,
+        } => match (category, due_date) {
+            (None, None) => {
+                conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
+                    .unwrap();
+            }
+            (Some(c), None) => {
+                conn.execute(
+                        "INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))",
+                        [&task, &c]
+                    )
+                    .unwrap();
+            }
+            (None, Some(d)) => {
+                let formatted_date = format_date(&d).unwrap();
+                conn.execute(
+                    "INSERT INTO tasks (info, due_date) VALUES (?1, ?2)",
+                    [&task, &formatted_date],
+                )
+                .unwrap();
+            }
+            (Some(c), Some(d)) => {
+                let formatted_date = format_date(&d).unwrap();
+                conn.execute(
+                        "INSERT INTO tasks (info, due_date, category) VALUES (?1, ?2, (SELECT id FROM categories WHERE name = ?3))",
+                        [&task, &formatted_date, &c],
+                    )
+                    .unwrap();
+            }
+        },
         Commands::List => {
             struct Task {
                 id: u32,
                 info: String,
-                category: String,
+                done: bool,
+                due_date: Option<String>,
+                category: Option<String>,
             }
+
             let mut stmt = conn
                 .prepare(
-                    "
+                    r#"
                     SELECT
                         tasks.id,
                         tasks.info,
+                        tasks.done,
+                        tasks.due_date,
                         categories.name
                     FROM tasks
-                    LEFT JOIN categories ON tasks.category = categories.id
-                    WHERE done == false",
+                    LEFT JOIN
+                        categories
+                    ON
+                        tasks.category = categories.id"#,
                 )
                 .unwrap();
+
             let task_iter = stmt
                 .query_map((), |row| {
                     Ok(Task {
-                        id: row.get(0).unwrap(),
-                        info: row.get(1).unwrap(),
-                        category: row.get(2).unwrap(),
+                        id: row.get(0)?,
+                        info: row.get(1)?,
+                        done: row.get(2)?,
+                        due_date: row.get(3)?,
+                        category: row.get(4)?,
                     })
                 })
                 .unwrap();
+
             println!("Tasks:");
             for task in task_iter {
                 let task = task.unwrap();
-                println!("{}: {}: {}", task.id, task.category, task.info)
+                println!(
+                    "{} : {} : {} : {:?} : {:?}",
+                    task.id, task.info, task.done, task.due_date, task.category
+                )
             }
         }
         Commands::Edit { id, finished } => {
@@ -130,6 +163,67 @@ fn main() {
             }
         }
     }
+}
+
+fn format_date(date: &str) -> Option<String> {
+    let cleaned = date.trim().replace("/", "-");
+    let parts: Vec<_> = cleaned.trim().split('-').collect();
+
+    match parts.len() {
+        3 => {
+            // YYYY-MM-DD
+            // YYYY-M-D
+            // YYYY-M-DD
+            // YYYY-MM-D
+            if let Ok(date) = NaiveDate::parse_from_str(&cleaned, "%Y-%m-%d") {
+                return Some(date.format("%Y-%m-%d").to_string());
+            }
+
+            if let Ok(year) = parts[0].parse::<i32>() {
+                if year > 0 && year < 100 {
+                    let full_year = 2000 + year;
+
+                    let month = match parts[1].parse::<u32>() {
+                        Ok(m) => m,
+                        Err(_) => return None,
+                    };
+
+                    let day = match parts[2].parse::<u32>() {
+                        Ok(d) => d,
+                        Err(_) => return None,
+                    };
+
+                    // YY-MM-DD
+                    // YY-M-DD
+                    // YY-MM-D
+                    // YY-M-D
+                    if let Some(date) = NaiveDate::from_ymd_opt(full_year, month, day) {
+                        return Some(date.format("%Y-%m-%d").to_string());
+                    }
+                } else {
+                    return None;
+                }
+            }
+            None
+        }
+        _ => None, // handle 2 and 1
+    }
+
+    // 2025-09-10 21:13:14.960340156 -07:00
+    // ["2025", "09", "10"]
+    // let now = Local::now();
+    // println!("{}", now);
+    // let parts: Vec<_> = cleaned.split('-').collect();
+    // println!("{:?}", parts);
+    // i want to make all of these into YYYY-MM-DD (if things are ommited assume that they are the
+    // next instanse of that time(assume it is today if possible))
+    // let date = match parts.len() {
+    //     // D or DD
+    //     1 => "",
+    //     // MM-DD
+    //     // M-D
+    //     // M-DD
+    //     // MM-D
 }
 
 // Diff {
@@ -259,3 +353,4 @@ fn main() {
 //         println!("Calling out to {:?} with {:?}", &args[0], &args[1..]);
 //     }
 // }
+//look into chrono for this
