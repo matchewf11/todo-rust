@@ -23,13 +23,13 @@ enum Commands {
         #[arg(short, long)]
         category: Option<String>,
 
-        /// Task due date: `YYYY-MM-DD`, `MM-DD`, or `DD`. `/` allowed, leading zeros optional.
+        /// Due date: YYYY-MM-DD, MM-DD, DD (slashes allowed, leading zeros optional)
         #[arg(short, long)]
         due_date: Option<String>,
     },
 
     /// List all todo items
-    List,
+    List, // list by category or due_date or exclude done stuff?
 
     /// Edit todo list item
     #[command(arg_required_else_help = true)]
@@ -40,6 +40,7 @@ enum Commands {
         /// Problem is finished
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
         finished: bool,
+        // edit thh category, info, un-done, due-date
     },
 }
 
@@ -91,7 +92,7 @@ fn main() {
                     .unwrap();
             }
             (None, Some(d)) => {
-                let formatted_date = format_date(&d).unwrap();
+                let formatted_date = format_date(&d, &Local::now().date_naive()).unwrap();
                 conn.execute(
                     "INSERT INTO tasks (info, due_date) VALUES (?1, ?2)",
                     [&task, &formatted_date],
@@ -99,7 +100,7 @@ fn main() {
                 .unwrap();
             }
             (Some(c), Some(d)) => {
-                let formatted_date = format_date(&d).unwrap();
+                let formatted_date = format_date(&d, &Local::now().date_naive()).unwrap();
                 conn.execute(
                         "INSERT INTO tasks (info, due_date, category) VALUES (?1, ?2, (SELECT id FROM categories WHERE name = ?3))",
                         [&task, &formatted_date, &c],
@@ -129,7 +130,11 @@ fn main() {
                     LEFT JOIN
                         categories
                     ON
-                        tasks.category = categories.id"#,
+                        tasks.category = categories.id
+                    ORDER BY
+                        tasks.due_date IS NULL,
+                        tasks.due_date
+                    "#,
                 )
                 .unwrap();
 
@@ -186,7 +191,7 @@ fn main() {
 }
 
 // format input into YYYY-MM-DD
-fn format_date(date: &str) -> Result<String, &str> {
+fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
     let cleaned = date.trim().replace("/", "-");
     let parts: Vec<_> = cleaned.trim().split('-').collect();
 
@@ -217,7 +222,6 @@ fn format_date(date: &str) -> Result<String, &str> {
         }
     }
 
-    let today = Local::now().date_naive();
     match (y, m, d) {
         // wont work past 2100 :(, will fix then
         (Some(year), Some(month), Some(day)) => make_date(
@@ -226,14 +230,14 @@ fn format_date(date: &str) -> Result<String, &str> {
             day,
         ),
         (None, Some(month), Some(day)) => {
-            if month == today.month() && day == today.day() {
+            if month > today.month() || (month == today.month() && day >= today.day()) {
                 make_date(today.year(), month, day)
             } else {
                 make_date(today.year() + 1, month, day)
             }
         }
         (None, None, Some(day)) => {
-            if day == today.day() {
+            if day >= today.day() {
                 make_date(today.year(), today.month(), day)
             } else {
                 let today_month = today.month();
@@ -378,3 +382,90 @@ fn format_date(date: &str) -> Result<String, &str> {
 // }
 //look into chrono for this
 //read env for time zones change time to my time
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn make_today(y: i32, m: u32, d: u32) -> NaiveDate {
+        NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn test_full_dates() {
+        let today = make_today(2025, 9, 11);
+
+        // Already future full date
+        assert_eq!(format_date("2025-10-15", &today).unwrap(), "2025-10-15");
+
+        // Past full date should still parse, but your logic might move to next future
+        assert_eq!(format_date("2025-09-10", &today).unwrap(), "2025-09-10");
+
+        // 2-digit year
+        assert_eq!(format_date("25-12-01", &today).unwrap(), "2025-12-01");
+
+        // 1-digit year (assuming your code handles this as 200Y)
+        assert_eq!(format_date("5-12-01", &today).unwrap(), "2005-12-01");
+    }
+
+    #[test]
+    fn test_month_day() {
+        let today = make_today(2025, 9, 11);
+
+        // Later this month
+        assert_eq!(format_date("09-15", &today).unwrap(), "2025-09-15");
+
+        // Earlier in month -> next year
+        assert_eq!(format_date("09-01", &today).unwrap(), "2026-09-01");
+
+        // December -> same year
+        assert_eq!(format_date("12-25", &today).unwrap(), "2025-12-25");
+    }
+
+    #[test]
+    fn test_day_only() {
+        let today = make_today(2025, 9, 11);
+
+        // Later day this month
+        assert_eq!(format_date("15", &today).unwrap(), "2025-09-15");
+
+        // Earlier day -> next month
+        assert_eq!(format_date("01", &today).unwrap(), "2025-10-01");
+
+        // Same day -> today
+        assert_eq!(format_date("11", &today).unwrap(), "2025-09-11");
+
+        // End-of-year rollover
+        let dec_today = make_today(2025, 12, 31);
+        assert_eq!(format_date("01", &dec_today).unwrap(), "2026-01-01");
+    }
+
+    #[test]
+    fn test_invalid_dates() {
+        let today = make_today(2025, 9, 11);
+
+        // Invalid month
+        assert!(format_date("2025-13-01", &today).is_err());
+
+        // Invalid day
+        assert!(format_date("2025-02-30", &today).is_err());
+
+        // Non-numeric
+        assert!(format_date("abcd", &today).is_err());
+
+        // Empty string
+        assert!(format_date("", &today).is_err());
+    }
+
+    #[test]
+    fn test_slash_separator() {
+        let today = make_today(2025, 9, 11);
+
+        // Full date with slashes
+        assert_eq!(format_date("2025/10/12", &today).unwrap(), "2025-10-12");
+
+        // Month/day with slashes
+        assert_eq!(format_date("10/15", &today).unwrap(), "2025-10-15");
+    }
+}
