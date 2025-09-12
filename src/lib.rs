@@ -1,4 +1,24 @@
+use chrono::{Datelike, Local, NaiveDate};
 use rusqlite::{Connection, Error, Result};
+use std::fmt;
+
+pub struct Task {
+    id: u32,
+    info: String,
+    done: bool,
+    due_date: Option<String>,
+    category: Option<String>,
+}
+
+impl fmt::Display for Task {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}. {} | {} | {:?} | {:?}",
+            self.id, self.info, self.done, self.due_date, self.category,
+        )
+    }
+}
 
 pub fn init_db(db_path: &str) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
@@ -32,8 +52,6 @@ pub fn init_db(db_path: &str) -> Result<Connection> {
 }
 
 pub fn edit_task(conn: &Connection, id: i32, finish: bool) -> Result<()> {
-    // fix this method up!!!!
-
     if !finish {
         return Ok(());
     }
@@ -44,3 +62,195 @@ pub fn edit_task(conn: &Connection, id: i32, finish: bool) -> Result<()> {
     }
     Ok(())
 }
+
+pub fn get_tasks(conn: &Connection, sort_by_cat: bool, include_done: bool) -> Result<Vec<Task>> {
+    conn.prepare(match (sort_by_cat, include_done) {
+        (false, false) => {
+            r#"
+        SELECT
+            tasks.id,
+            tasks.info,
+            tasks.done,
+            tasks.due_date,
+            categories.name
+        FROM tasks
+        LEFT JOIN
+            categories
+        ON
+            tasks.category = categories.id
+        WHERE
+            tasks.done = false
+        ORDER BY
+            tasks.due_date IS NULL,
+            tasks.due_date
+        "#
+        }
+        (true, false) => {
+            r#"
+        SELECT
+            tasks.id,
+            tasks.info,
+            tasks.done,
+            tasks.due_date,
+            categories.name
+        FROM tasks
+        LEFT JOIN
+            categories
+        ON
+            tasks.category = categories.id
+        WHERE
+            tasks.done = false
+        ORDER BY
+            categories.id,
+            tasks.due_date IS NULL,
+            tasks.due_date
+        "#
+        }
+        (false, true) => {
+            r#"
+        SELECT
+            tasks.id,
+            tasks.info,
+            tasks.done,
+            tasks.due_date,
+            categories.name
+        FROM tasks
+        LEFT JOIN
+            categories
+        ON
+            tasks.category = categories.id
+        ORDER BY
+            tasks.done,
+            tasks.due_date IS NULL,
+            tasks.due_date
+        "#
+        }
+        (true, true) => {
+            r#"
+        SELECT
+            tasks.id,
+            tasks.info,
+            tasks.done,
+            tasks.due_date,
+            categories.name
+        FROM tasks
+        LEFT JOIN
+            categories
+        ON
+            tasks.category = categories.id
+        ORDER BY
+            tasks.done,
+            categories.id,
+            tasks.due_date IS NULL,
+            tasks.due_date
+        "#
+        }
+    })?
+    .query_map((), |row| {
+        Ok(Task {
+            id: row.get(0)?,
+            info: row.get(1)?,
+            done: row.get(2)?,
+            due_date: row.get(3)?,
+            category: row.get(4)?,
+        })
+    })?
+    .collect()
+}
+
+pub fn add_task(
+    conn: &rusqlite::Connection,
+    task: &str,
+    category: &Option<String>,
+    due_date: &Option<String>,
+) -> rusqlite::Result<()> {
+    match (category, due_date) {
+        (None, None) => {
+            conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
+        }
+        (Some(c), None) => {
+            conn.execute("INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))", [task, c])
+        }
+        (None, Some(d)) => {
+            let formatted_date = format_date(d, &Local::now().date_naive()).unwrap();
+            conn.execute(
+                "INSERT INTO tasks (info, due_date) VALUES (?1, ?2)",
+                [task, &formatted_date],
+            )
+        }
+        (Some(c), Some(d)) => {
+            let formatted_date = format_date(d, &Local::now().date_naive()).unwrap();
+            conn.execute(
+               "INSERT INTO tasks (info, due_date, category) VALUES (?1, ?2, (SELECT id FROM categories WHERE name = ?3))",
+               [task, &formatted_date, c],
+           )
+        }
+    }.map(|_| ())
+}
+
+pub fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
+    let cleaned = date.trim().replace("/", "-");
+    let parts: Vec<_> = cleaned.trim().split('-').collect();
+
+    fn parse_part(part: &str, msg: &'static str) -> Result<u32, &'static str> {
+        part.parse().map_err(|_| msg)
+    }
+
+    let (y, m, d) = match parts.len() {
+        3 => (
+            Some(parse_part(parts[0], "Y-M-D invalid year")?),
+            Some(parse_part(parts[1], "Y-M-D invalid month")?),
+            Some(parse_part(parts[2], "Y-M-D invalid day")?),
+        ),
+        2 => (
+            None,
+            Some(parse_part(parts[0], "M-D invalid month")?),
+            Some(parse_part(parts[1], "M-D invalid day")?),
+        ),
+        1 => (None, None, Some(parse_part(parts[0], "D invalid day")?)),
+        _ => return Err("could not parse"),
+    };
+
+    fn make_date(y: i32, m: u32, d: u32) -> Result<String, &'static str> {
+        if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+            Ok(date.format("%Y-%m-%d").to_string())
+        } else {
+            Err("unable to parse date")
+        }
+    }
+
+    match (y, m, d) {
+        // wont work past 2100 :(, will fix then
+        (Some(year), Some(month), Some(day)) => make_date(
+            (if year < 100 { year + 2000 } else { year }) as i32,
+            month,
+            day,
+        ),
+        (None, Some(month), Some(day)) => {
+            if month > today.month() || (month == today.month() && day >= today.day()) {
+                make_date(today.year(), month, day)
+            } else {
+                make_date(today.year() + 1, month, day)
+            }
+        }
+        (None, None, Some(day)) => {
+            if day >= today.day() {
+                make_date(today.year(), today.month(), day)
+            } else {
+                let today_month = today.month();
+                let (new_year, new_month) = if today_month == 12 {
+                    (today.year() + 1, 1)
+                } else {
+                    (today.year(), today_month + 1)
+                };
+                make_date(new_year, new_month, day)
+            }
+        }
+        _ => Err("cannot parse the date"),
+    }
+}
+
+//look into chrono for this
+//read env for time zones change time to my time
+// include env arguments for customazation or should i have
+// a lua/toml file
