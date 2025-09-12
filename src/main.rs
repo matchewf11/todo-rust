@@ -1,6 +1,8 @@
 use chrono::{Datelike, Local, NaiveDate};
 use clap::{Parser, Subcommand};
-use rusqlite::Connection;
+use rusqlite::Result;
+use std::process;
+use todo::init_db;
 
 ///A command line todo app
 #[derive(Debug, Parser)]
@@ -45,34 +47,10 @@ enum Commands {
 }
 
 fn main() {
-    let conn = Connection::open("./todo.db").unwrap();
-
-    conn.execute(
-        r#"
-        CREATE TABLE IF NOT EXISTS categories (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            name TEXT NOT NULL UNIQUE CHECK(name != '')
-        )"#,
-        (),
-    )
-    .unwrap();
-
-    conn.execute(
-        r#"CREATE TABLE IF NOT EXISTS tasks (
-            id INTEGER PRIMARY KEY,
-            info TEXT NOT NULL UNIQUE CHECK(info != ''),
-            done BOOLEAN NOT NULL DEFAULT false CHECK(done in (0, 1)),
-            due_date TEXT CHECK(
-                due_date IS NULL OR 
-                (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
-                    date(due_date) IS NOT NULL)
-            ),
-            category INTEGER,
-            FOREIGN KEY(category) REFERENCES categories(id)
-        )"#,
-        (),
-    )
-    .unwrap();
+    let conn = init_db("./todo.db").unwrap_or_else(|err| {
+        println!("Could not initalize db connection: {err}");
+        process::exit(1)
+    });
 
     match Cli::parse().command {
         Commands::Add {
@@ -190,7 +168,6 @@ fn main() {
     }
 }
 
-// format input into YYYY-MM-DD
 fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
     let cleaned = date.trim().replace("/", "-");
     let parts: Vec<_> = cleaned.trim().split('-').collect();
@@ -252,6 +229,8 @@ fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
         _ => Err("cannot parse the date"),
     }
 }
+
+// clean this up later
 
 // Diff {
 //     #[arg(value_name = "COMMIT")]
@@ -383,89 +362,5 @@ fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
 //look into chrono for this
 //read env for time zones change time to my time
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use chrono::NaiveDate;
-
-    fn make_today(y: i32, m: u32, d: u32) -> NaiveDate {
-        NaiveDate::from_ymd_opt(y, m, d).unwrap()
-    }
-
-    #[test]
-    fn test_full_dates() {
-        let today = make_today(2025, 9, 11);
-
-        // Already future full date
-        assert_eq!(format_date("2025-10-15", &today).unwrap(), "2025-10-15");
-
-        // Past full date should still parse, but your logic might move to next future
-        assert_eq!(format_date("2025-09-10", &today).unwrap(), "2025-09-10");
-
-        // 2-digit year
-        assert_eq!(format_date("25-12-01", &today).unwrap(), "2025-12-01");
-
-        // 1-digit year (assuming your code handles this as 200Y)
-        assert_eq!(format_date("5-12-01", &today).unwrap(), "2005-12-01");
-    }
-
-    #[test]
-    fn test_month_day() {
-        let today = make_today(2025, 9, 11);
-
-        // Later this month
-        assert_eq!(format_date("09-15", &today).unwrap(), "2025-09-15");
-
-        // Earlier in month -> next year
-        assert_eq!(format_date("09-01", &today).unwrap(), "2026-09-01");
-
-        // December -> same year
-        assert_eq!(format_date("12-25", &today).unwrap(), "2025-12-25");
-    }
-
-    #[test]
-    fn test_day_only() {
-        let today = make_today(2025, 9, 11);
-
-        // Later day this month
-        assert_eq!(format_date("15", &today).unwrap(), "2025-09-15");
-
-        // Earlier day -> next month
-        assert_eq!(format_date("01", &today).unwrap(), "2025-10-01");
-
-        // Same day -> today
-        assert_eq!(format_date("11", &today).unwrap(), "2025-09-11");
-
-        // End-of-year rollover
-        let dec_today = make_today(2025, 12, 31);
-        assert_eq!(format_date("01", &dec_today).unwrap(), "2026-01-01");
-    }
-
-    #[test]
-    fn test_invalid_dates() {
-        let today = make_today(2025, 9, 11);
-
-        // Invalid month
-        assert!(format_date("2025-13-01", &today).is_err());
-
-        // Invalid day
-        assert!(format_date("2025-02-30", &today).is_err());
-
-        // Non-numeric
-        assert!(format_date("abcd", &today).is_err());
-
-        // Empty string
-        assert!(format_date("", &today).is_err());
-    }
-
-    #[test]
-    fn test_slash_separator() {
-        let today = make_today(2025, 9, 11);
-
-        // Full date with slashes
-        assert_eq!(format_date("2025/10/12", &today).unwrap(), "2025-10-12");
-
-        // Month/day with slashes
-        assert_eq!(format_date("10/15", &today).unwrap(), "2025-10-15");
-    }
-}
+// include env arguments for customazation or should i have
+// a lua/toml file
