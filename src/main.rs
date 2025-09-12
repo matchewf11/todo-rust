@@ -44,10 +44,25 @@ enum Commands {
         /// Id of task to finish
         id: i32,
 
-        /// Problem is finished
+        /// Set if problems is done with true or false
+        #[arg(short, long)]
+        finish: Option<bool>,
+
+        /// Set problem due date
+        #[arg(short, long)]
+        due_date: Option<String>,
+
+        /// Set problem category
+        #[arg(short, long)]
+        category: Option<String>,
+
+        /// Set problem info
+        #[arg(short, long)]
+        info: Option<String>,
+
+        /// Remove problem (use with caution, must write 'delete')
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
-        finish: bool,
-        // edit thh category, info, un-done, due-date
+        remove: bool,
     },
 }
 
@@ -61,10 +76,12 @@ fn main() {
             task,
             category,
             due_date,
-        } => todo::add_task(&conn, &task, &category, &due_date).unwrap_or_else(|err| {
-            println!("Could not add task: {err}");
-            process::exit(1)
-        }),
+        } => todo::add_task(&conn, &task, category.as_deref(), due_date.as_deref()).unwrap_or_else(
+            |err| {
+                println!("Could not add task: {err}");
+                process::exit(1)
+            },
+        ),
         Commands::List {
             by_category,
             include_done,
@@ -77,7 +94,23 @@ fn main() {
                 .iter()
                 .for_each(|t| println!("{t}"));
         }
-        Commands::Edit { id, finish } => todo::edit_task(&conn, id, finish).unwrap_or_else(|err| {
+        Commands::Edit {
+            id,
+            finish,
+            due_date,
+            category,
+            info,
+            remove,
+        } => todo::edit_task(
+            &conn,
+            id,
+            finish,
+            due_date.as_deref(),
+            category.as_deref(),
+            info.as_deref(),
+            remove,
+        )
+        .unwrap_or_else(|err| {
             println!("Could not edit task: {err}");
             process::exit(1)
         }),

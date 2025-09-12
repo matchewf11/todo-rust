@@ -1,5 +1,5 @@
 use chrono::{Datelike, Local, NaiveDate};
-use rusqlite::{Connection, Error, Result};
+use rusqlite::{Connection, Result};
 use std::fmt;
 
 pub struct Task {
@@ -51,15 +51,51 @@ pub fn init_db(db_path: &str) -> Result<Connection> {
     Ok(conn)
 }
 
-pub fn edit_task(conn: &Connection, id: i32, finish: bool) -> Result<()> {
-    if !finish {
-        return Ok(());
+pub fn edit_task(
+    conn: &Connection,
+    id: i32,
+    finish: Option<bool>,
+    due_date: Option<&str>,
+    category: Option<&str>,
+    info: Option<&str>,
+    remove: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(f) = finish {
+        conn.execute(
+            "UPDATE tasks SET done = ?1 WHERE id = ?2",
+            rusqlite::params![&f, &id],
+        )?;
     }
-    let rows_updated = conn.execute("UPDATE tasks SET done = true WHERE id = ?1", [&id])?;
 
-    if rows_updated == 0 {
-        return Err(Error::QueryReturnedNoRows);
+    if let Some(i) = info {
+        conn.execute(
+            "UPDATE tasks SET info = ?1 WHERE id = ?2",
+            rusqlite::params![i, &id],
+        )?;
     }
+
+    if let Some(d) = due_date {
+        let fmt_date = format_date(d, &Local::now().date_naive())?;
+        conn.execute(
+            "UPDATE tasks SET due_date = ?1 WHERE id = ?2",
+            rusqlite::params![&fmt_date, &id],
+        )?;
+    }
+    if let Some(c) = category {
+        conn.execute(
+            r#"
+        UPDATE tasks
+        SET category = (SELECT id FROM categories WHERE name = ?1)
+        WHERE id = ?2
+        "#,
+            rusqlite::params![c, &id],
+        )?;
+    }
+
+    if remove {
+        conn.execute("DELETE FROM tasks WHERE id = ?1", [&id])?;
+    }
+
     Ok(())
 }
 
@@ -161,8 +197,8 @@ pub fn get_tasks(conn: &Connection, sort_by_cat: bool, include_done: bool) -> Re
 pub fn add_task(
     conn: &rusqlite::Connection,
     task: &str,
-    category: &Option<String>,
-    due_date: &Option<String>,
+    category: Option<&str>,
+    due_date: Option<&str>,
 ) -> rusqlite::Result<()> {
     match (category, due_date) {
         (None, None) => {
