@@ -1,8 +1,8 @@
 use chrono::{Datelike, Local, NaiveDate};
 use clap::{Parser, Subcommand};
 use rusqlite::Result;
+use std::fmt;
 use std::process;
-use todo::init_db;
 
 ///A command line todo app
 #[derive(Debug, Parser)]
@@ -41,13 +41,13 @@ enum Commands {
 
         /// Problem is finished
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
-        finished: bool,
+        finish: bool,
         // edit thh category, info, un-done, due-date
     },
 }
 
 fn main() {
-    let conn = init_db("./todo.db").unwrap_or_else(|err| {
+    let conn = todo::init_db("./todo.db").unwrap_or_else(|err| {
         println!("Could not initalize db connection: {err}");
         process::exit(1)
     });
@@ -57,115 +57,105 @@ fn main() {
             task,
             category,
             due_date,
-        } => match (category, due_date) {
-            (None, None) => {
-                conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])
-                    .unwrap();
-            }
-            (Some(c), None) => {
-                conn.execute(
-                        "INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))",
-                        [&task, &c]
-                    )
-                    .unwrap();
-            }
-            (None, Some(d)) => {
-                let formatted_date = format_date(&d, &Local::now().date_naive()).unwrap();
-                conn.execute(
-                    "INSERT INTO tasks (info, due_date) VALUES (?1, ?2)",
-                    [&task, &formatted_date],
-                )
-                .unwrap();
-            }
-            (Some(c), Some(d)) => {
-                let formatted_date = format_date(&d, &Local::now().date_naive()).unwrap();
-                conn.execute(
-                        "INSERT INTO tasks (info, due_date, category) VALUES (?1, ?2, (SELECT id FROM categories WHERE name = ?3))",
-                        [&task, &formatted_date, &c],
-                    )
-                    .unwrap();
-            }
-        },
+        } => add_task(&conn, &task, &category, &due_date).unwrap_or_else(|err| {
+            println!("Could not add task: {err}");
+            process::exit(1)
+        }),
         Commands::List => {
-            struct Task {
-                id: u32,
-                info: String,
-                done: bool,
-                due_date: Option<String>,
-                category: Option<String>,
-            }
-
-            let mut stmt = conn
-                .prepare(
-                    r#"
-                    SELECT
-                        tasks.id,
-                        tasks.info,
-                        tasks.done,
-                        tasks.due_date,
-                        categories.name
-                    FROM tasks
-                    LEFT JOIN
-                        categories
-                    ON
-                        tasks.category = categories.id
-                    ORDER BY
-                        tasks.due_date IS NULL,
-                        tasks.due_date
-                    "#,
-                )
-                .unwrap();
-
-            let task_iter = stmt
-                .query_map((), |row| {
-                    Ok(Task {
-                        id: row.get(0)?,
-                        info: row.get(1)?,
-                        done: row.get(2)?,
-                        due_date: row.get(3)?,
-                        category: row.get(4)?,
-                    })
+            get_tasks(&conn)
+                .unwrap_or_else(|err| {
+                    println!("Could not get tasks: {err}");
+                    process::exit(1)
                 })
-                .unwrap();
-
-            println!("Tasks:");
-            for task in task_iter {
-                let task = task.unwrap();
-                println!(
-                    "{}. {}{}{}{}",
-                    task.id,
-                    task.info,
-                    if task.done {
-                        " | Finished"
-                    } else {
-                        " | Incomplete"
-                    },
-                    if let Some(d) = task.due_date {
-                        format!(" | Due: {}", d)
-                    } else {
-                        String::new()
-                    },
-                    if let Some(c) = task.category {
-                        format!(" | Category: {}", c)
-                    } else {
-                        String::new()
-                    },
-                )
-            }
+                .iter()
+                .for_each(|t| println!("{t}"));
         }
-        Commands::Edit { id, finished } => {
-            if finished {
-                let rows_changed = conn
-                    .execute("UPDATE tasks SET done = true WHERE id = ?1", [&id])
-                    .unwrap();
-                if rows_changed == 0 {
-                    println!("Did not edit anything")
-                }
-            } else {
-                println!("Did not edit anything")
-            }
+        Commands::Edit { id, finish } => todo::edit_task(&conn, id, finish).unwrap_or_else(|err| {
+            println!("Could not edit task: {err}");
+            process::exit(1)
+        }),
+    }
+}
+
+fn add_task(
+    conn: &rusqlite::Connection,
+    task: &str,
+    category: &Option<String>,
+    due_date: &Option<String>,
+) -> rusqlite::Result<()> {
+    match (category, due_date) {
+        (None, None) => {
+            conn.execute("INSERT INTO tasks (info) VALUES (?1)", [&task])?;
+        }
+        (Some(c), None) => {
+            conn.execute("INSERT INTO tasks (info, category) VALUES (?1, (SELECT id FROM categories WHERE name = ?2))", [task, c])?;
+        }
+        (None, Some(d)) => {
+            let formatted_date = format_date(d, &Local::now().date_naive()).unwrap();
+            conn.execute(
+                "INSERT INTO tasks (info, due_date) VALUES (?1, ?2)",
+                [task, &formatted_date],
+            )?;
+        }
+        (Some(c), Some(d)) => {
+            let formatted_date = format_date(d, &Local::now().date_naive()).unwrap();
+            conn.execute(
+               "INSERT INTO tasks (info, due_date, category) VALUES (?1, ?2, (SELECT id FROM categories WHERE name = ?3))",
+               [task, &formatted_date, c],
+           )?;
         }
     }
+
+    Ok(())
+}
+
+struct Task {
+    id: u32,
+    info: String,
+    done: bool,
+    due_date: Option<String>,
+    category: Option<String>,
+}
+
+impl fmt::Display for Task {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            f,
+            "{}. {} | {} | {:?} | {:?}",
+            self.id, self.info, self.done, self.due_date, self.category,
+        )
+    }
+}
+
+fn get_tasks(conn: &rusqlite::Connection) -> rusqlite::Result<Vec<Task>> {
+    conn.prepare(
+        r#"
+        SELECT
+            tasks.id,
+            tasks.info,
+            tasks.done,
+            tasks.due_date,
+            categories.name
+        FROM tasks
+        LEFT JOIN
+            categories
+        ON
+            tasks.category = categories.id
+        ORDER BY
+            tasks.due_date IS NULL,
+            tasks.due_date
+        "#,
+    )?
+    .query_map((), |row| {
+        Ok(Task {
+            id: row.get(0)?,
+            info: row.get(1)?,
+            done: row.get(2)?,
+            due_date: row.get(3)?,
+            category: row.get(4)?,
+        })
+    })?
+    .collect()
 }
 
 fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {

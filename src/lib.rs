@@ -1,4 +1,4 @@
-use rusqlite::{Connection, Result};
+use rusqlite::{Connection, Error, Result};
 
 pub fn init_db(db_path: &str) -> Result<Connection> {
     let conn = Connection::open(db_path)?;
@@ -29,4 +29,18 @@ pub fn init_db(db_path: &str) -> Result<Connection> {
     )?;
 
     Ok(conn)
+}
+
+pub fn edit_task(conn: &Connection, id: i32, finish: bool) -> Result<()> {
+    // fix this method up!!!!
+
+    if !finish {
+        return Ok(());
+    }
+    let rows_updated = conn.execute("UPDATE tasks SET done = true WHERE id = ?1", [&id])?;
+
+    if rows_updated == 0 {
+        return Err(Error::QueryReturnedNoRows);
+    }
+    Ok(())
 }
