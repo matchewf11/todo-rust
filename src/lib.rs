@@ -100,11 +100,9 @@ pub fn edit_task(
 }
 
 pub fn get_tasks(conn: &Connection, sort_by_cat: bool, include_done: bool) -> Result<Vec<Task>> {
-    conn.prepare(match (sort_by_cat, include_done) {
-        (false, false) => {
-            r#"
-        SELECT
-            tasks.id,
+    let mut sql = String::from(
+        r#"
+        SELECT tasks.id,
             tasks.info,
             tasks.done,
             tasks.due_date,
@@ -114,84 +112,30 @@ pub fn get_tasks(conn: &Connection, sort_by_cat: bool, include_done: bool) -> Re
             categories
         ON
             tasks.category = categories.id
-        WHERE
-            tasks.done = false
-        ORDER BY
-            tasks.due_date IS NULL,
-            tasks.due_date
-        "#
-        }
-        (true, false) => {
-            r#"
-        SELECT
-            tasks.id,
-            tasks.info,
-            tasks.done,
-            tasks.due_date,
-            categories.name
-        FROM tasks
-        LEFT JOIN
-            categories
-        ON
-            tasks.category = categories.id
-        WHERE
-            tasks.done = false
-        ORDER BY
-            categories.id,
-            tasks.due_date IS NULL,
-            tasks.due_date
-        "#
-        }
-        (false, true) => {
-            r#"
-        SELECT
-            tasks.id,
-            tasks.info,
-            tasks.done,
-            tasks.due_date,
-            categories.name
-        FROM tasks
-        LEFT JOIN
-            categories
-        ON
-            tasks.category = categories.id
-        ORDER BY
-            tasks.done,
-            tasks.due_date IS NULL,
-            tasks.due_date
-        "#
-        }
-        (true, true) => {
-            r#"
-        SELECT
-            tasks.id,
-            tasks.info,
-            tasks.done,
-            tasks.due_date,
-            categories.name
-        FROM tasks
-        LEFT JOIN
-            categories
-        ON
-            tasks.category = categories.id
-        ORDER BY
-            tasks.done,
-            categories.id,
-            tasks.due_date IS NULL,
-            tasks.due_date
-        "#
-        }
-    })?
-    .query_map((), |row| {
-        Ok(Task {
-            id: row.get(0)?,
-            info: row.get(1)?,
-            done: row.get(2)?,
-            due_date: row.get(3)?,
-            category: row.get(4)?,
-        })
-    })?
-    .collect()
+        "#,
+    );
+    if !include_done {
+        sql.push_str("WHERE tasks.done = false\n");
+    }
+    sql.push_str("ORDER BY\n");
+    if include_done {
+        sql.push_str("tasks.done, \n");
+    }
+    if sort_by_cat {
+        sql.push_str("categories.id, \n");
+    }
+    sql.push_str("tasks.due_date IS NULL, tasks.due_date");
+    conn.prepare(&sql)?
+        .query_map((), |row| {
+            Ok(Task {
+                id: row.get(0)?,
+                info: row.get(1)?,
+                done: row.get(2)?,
+                due_date: row.get(3)?,
+                category: row.get(4)?,
+            })
+        })?
+        .collect()
 }
 
 pub fn add_task(
