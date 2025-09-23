@@ -1,5 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::process;
+use todo::TodoConn;
 
 ///A command line todo app
 #[derive(Debug, Parser)]
@@ -31,7 +32,7 @@ enum Commands {
     List {
         /// Sort By Category
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
-        by_category: bool,
+        category: bool,
 
         /// Include Finshed Tasks
         #[arg(short, long, action = clap::ArgAction::SetTrue)]
@@ -67,33 +68,36 @@ enum Commands {
 }
 
 fn main() {
-    let conn = todo::init_db("./todo.db").unwrap_or_else(|err| {
-        println!("Could not initalize db connection: {err}");
+    let conn = TodoConn::build("./todo.db").unwrap_or_else(|e| {
+        eprintln!("Could not init db: {e}");
         process::exit(1)
     });
+
+    // print a success message for each
+    // also print current time and date
+
     match Cli::parse().command {
         Commands::Add {
             task,
             category,
             due_date,
-        } => todo::add_task(&conn, &task, category.as_deref(), due_date.as_deref()).unwrap_or_else(
-            |err| {
-                println!("Could not add task: {err}");
+        } => conn
+            .add_task(&task, category.as_deref(), due_date.as_deref())
+            .unwrap_or_else(|e| {
+                eprintln!("Could not add task: {e}");
                 process::exit(1)
-            },
-        ),
+            }),
         Commands::List {
-            by_category,
+            category,
             include_done,
-        } => {
-            todo::get_tasks(&conn, by_category, include_done)
-                .unwrap_or_else(|err| {
-                    println!("Could not get tasks: {err}");
-                    process::exit(1)
-                })
-                .iter()
-                .for_each(|t| println!("{t}"));
-        }
+        } => conn
+            .get_task(category, include_done)
+            .unwrap_or_else(|e| {
+                println!("Could not get tasks: {e}");
+                process::exit(1)
+            })
+            .iter()
+            .for_each(|t| println!("{t}")),
         Commands::Edit {
             id,
             finish,
@@ -101,18 +105,19 @@ fn main() {
             category,
             info,
             remove,
-        } => todo::edit_task(
-            &conn,
-            id,
-            finish,
-            due_date.as_deref(),
-            category.as_deref(),
-            info.as_deref(),
-            remove,
-        )
-        .unwrap_or_else(|err| {
-            println!("Could not edit task: {err}");
-            process::exit(1)
-        }),
+        } => conn
+            .edit_task(
+                id,
+                finish,
+                due_date.as_deref(),
+                category.as_deref(),
+                info.as_deref(),
+                remove,
+            )
+            .unwrap_or_else(|e| {
+                println!("Could not edit task: {e}");
+                process::exit(1)
+            }),
     }
 }
+// makee sujre to add category
