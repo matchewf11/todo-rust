@@ -1,3 +1,4 @@
+use chrono::NaiveDate;
 use rusqlite::{Connection, Result};
 
 pub struct Conn {
@@ -38,65 +39,32 @@ impl Conn {
         Ok(Self { client })
     }
 }
-// pub fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
-//     let cleaned = date.trim().replace("/", "-");
-//     let parts: Vec<_> = cleaned.trim().split('-').collect();
+
+// #[derive(Debug, PartialEq)]
+// struct DateError(usize);
 //
-//     // let parse_part = |part: &str, msg| part.parse::<u32>().map_err(|_| msg);
-//     // let (y, m, d) = match parts.len() {
-//     //     3 => (
-//     //         Some(parse_part(parts[0], "Y-M-D invalid year")?),
-//     //         Some(parse_part(parts[1], "Y-M-D invalid month")?),
-//     //         Some(parse_part(parts[2], "Y-M-D invalid day")?),
-//     //     ),
-//     //     2 => (
-//     //         None,
-//     //         Some(parse_part(parts[0], "M-D invalid month")?),
-//     //         Some(parse_part(parts[1], "M-D invalid day")?),
-//     //     ),
-//     //     1 => (None, None, Some(parse_part(parts[0], "D invalid day")?)),
-//     //     _ => return Err("bad number of parts"),
-//     // };
-//     //
-//     Ok(cleaned)
+// fn format_date(date: &str, today: &NaiveDate) -> Result<String, DateError> {
+//     let cleaned_date = date.trim().replace("/", "-");
+//     let parts: Vec<_> = cleaned_date.split('-').collect();
 //
-//     // fn make_date(y: i32, m: u32, d: u32) -> Result<String, &'static str> {
-//     //     if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
-//     //         Ok(date.format("%Y-%m-%d").to_string())
-//     //     } else {
-//     //         Err("unable to parse date")
-//     //     }
-//     // }
-//     //
-//     // match (y, m, d) {
-//     //     // wont work past 2100 :(, will fix then
-//     //     (Some(year), Some(month), Some(day)) => make_date(
-//     //         (if year < 100 { year + 2000 } else { year }) as i32,
-//     //         month,
-//     //         day,
-//     //     ),
-//     //     (None, Some(month), Some(day)) => {
-//     //         if month > today.month() || (month == today.month() && day >= today.day()) {
-//     //             make_date(today.year(), month, day)
-//     //         } else {
-//     //             make_date(today.year() + 1, month, day)
-//     //         }
-//     //     }
-//     //     (None, None, Some(day)) => {
-//     //         if day >= today.day() {
-//     //             make_date(today.year(), today.month(), day)
-//     //         } else {
-//     //             let today_month = today.month();
-//     //             let (new_year, new_month) = if today_month == 12 {
-//     //                 (today.year() + 1, 1)
-//     //             } else {
-//     //                 (today.year(), today_month + 1)
-//     //             };
-//     //             make_date(new_year, new_month, day)
-//     //         }
-//     //     }
-//     //     _ => Err("cannot parse the date"),
-//     // }
+//     match parts.len() {
+//         1 => {
+//             if parts[0].is_empty() {
+//                 return Err(DateError(0));
+//             } else {
+//                 println!("size of 1")
+//             }
+//         }
+//         2 => println!("size of 2"),
+//         3 => println!("size of 3"),
+//         n => return Err(DateError(n)),
+//     }
+//
+//     Ok(cleaned_date)
+// }
+
+// fn split_date(date: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
+//     // do something
 // }
 
 #[cfg(test)]
@@ -105,8 +73,31 @@ mod tests {
     use rusqlite::{Error::SqliteFailure, Result, ffi};
 
     // #[test]
-    // fn format_date_test() {
-    //     unimplemented!();
+    // fn test_date_parts_lens() {
+    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
+    //     assert_eq!(Err(DateError(0)), format_date("  ", &today));
+    //     assert_eq!(Err(DateError(4)), format_date("1-1-1-1", &today));
+    //     assert!(format_date("1-1-1", &today).is_ok());
+    //     assert!(format_date("1-1", &today).is_ok());
+    //     assert!(format_date("1", &today).is_ok());
+    // }
+    //
+    // #[test]
+    // fn test_date_replace() {
+    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
+    //     assert_eq!(
+    //         format_date("2025/09/26", &today).unwrap(),
+    //         "2025-09-26".to_string()
+    //     )
+    // }
+    //
+    // #[test]
+    // fn test_date_trim() {
+    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
+    //     assert_eq!(
+    //         format_date(" \n 2025-09-26  \n ", &today).unwrap(),
+    //         "2025-09-26".to_string()
+    //     )
     // }
 
     fn assert_err<T>(res: Result<T>, err_code: i32, err_msg: &str) {
@@ -123,7 +114,62 @@ mod tests {
     }
 
     #[test]
-    fn test_db_constraints() {
+    fn test_db_invalid_done() {
+        let conn = get_test_conn();
+        assert_err(
+            conn.client
+                .execute("INSERT INTO tasks (info, done) VALUES ('foo', ?)", [2]),
+            ffi::SQLITE_CONSTRAINT_CHECK,
+            "CHECK constraint failed: done IN (0,1)",
+        );
+    }
+
+    #[test]
+    fn test_db_empty_duedate() {
+        let conn = get_test_conn();
+        assert!(
+            conn.client
+                .execute(
+                    "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
+                    [Option::<String>::None]
+                )
+                .is_ok()
+        );
+    }
+
+    #[test]
+    fn test_db_date_format() {
+        let conn = get_test_conn();
+        assert_err(
+            conn.client.execute(
+                "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
+                ["111-1-1".to_string()],
+            ),
+            ffi::SQLITE_CONSTRAINT_CHECK,
+            "CHECK constraint failed: due_date IS NULL OR
+                    (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
+                        date(due_date) IS NOT NULL)",
+        );
+    }
+
+    #[test]
+    fn test_db_invalid_date() {
+        let conn = get_test_conn();
+
+        assert_err(
+            conn.client.execute(
+                "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
+                ["2025-13-01".to_string()],
+            ),
+            ffi::SQLITE_CONSTRAINT_CHECK,
+            "CHECK constraint failed: due_date IS NULL OR
+                    (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
+                        date(due_date) IS NOT NULL)",
+        );
+    }
+
+    #[test]
+    fn test_db_unique_cat_name() {
         let conn = get_test_conn();
 
         conn.client
@@ -136,16 +182,23 @@ mod tests {
             ffi::SQLITE_CONSTRAINT_UNIQUE,
             "UNIQUE constraint failed: categories.name",
         );
+    }
 
+    #[test]
+    fn test_db_null_cat_name() {
         assert_err(
-            conn.client.execute(
+            get_test_conn().client.execute(
                 "INSERT INTO categories (name) VALUES (?)",
                 [Option::<String>::None],
             ),
             ffi::SQLITE_CONSTRAINT_NOTNULL,
             "NOT NULL constraint failed: categories.name",
         );
+    }
 
+    #[test]
+    fn test_db_null_task_info() {
+        let conn = get_test_conn();
         assert_err(
             conn.client.execute(
                 "INSERT INTO tasks (info) VALUES (?)",
@@ -154,61 +207,28 @@ mod tests {
             ffi::SQLITE_CONSTRAINT_NOTNULL,
             "NOT NULL constraint failed: tasks.info",
         );
+    }
 
+    #[test]
+    fn test_db_empty_cat_name() {
+        let conn = get_test_conn();
         assert_err(
             conn.client
                 .execute("INSERT INTO categories (name) VALUES ('')", ()),
             ffi::SQLITE_CONSTRAINT_CHECK,
             "CHECK constraint failed: name != ''",
         );
+    }
 
+    #[test]
+    fn test_db_empty_tasks_info() {
+        let conn = get_test_conn();
         assert_err(
             conn.client
                 .execute("INSERT INTO tasks (info) VALUES ('')", ()),
             ffi::SQLITE_CONSTRAINT_CHECK,
             "CHECK constraint failed: info != ''",
         );
-
-        assert_err(
-            conn.client
-                .execute("INSERT INTO tasks (info, done) VALUES ('foo', ?)", [2]),
-            ffi::SQLITE_CONSTRAINT_CHECK,
-            "CHECK constraint failed: done IN (0,1)",
-        );
-
-        assert!(
-            conn.client
-                .execute(
-                    "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
-                    [Option::<String>::None]
-                )
-                .is_ok()
-        );
-
-        assert_err(
-            conn.client.execute(
-                "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
-                ["111-1-1".to_string()],
-            ),
-            ffi::SQLITE_CONSTRAINT_CHECK,
-            "CHECK constraint failed: due_date IS NULL OR
-                    (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
-                        date(due_date) IS NOT NULL)",
-        );
-
-        assert_err(
-            conn.client.execute(
-                "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)",
-                ["2025-13-01".to_string()],
-            ),
-            ffi::SQLITE_CONSTRAINT_CHECK,
-            "CHECK constraint failed: due_date IS NULL OR
-                    (due_date GLOB '[0-9][0-9][0-9][0-9]-[0-1][0-9]-[0-3][0-9]' AND
-                        date(due_date) IS NOT NULL)",
-        );
-
-        // and make sure to split up these tests
-        // fn test_db_constraints() { let conn = get_test_conn(); conn.client .execute("INSERT INTO categories (name) VALUES ('hello')", ()) .unwrap(); assert_err( conn.client .execute("INSERT INTO categories (name) VALUES ('hello')", ()), ffi::SQLITE_CONSTRAINT_UNIQUE, "UNIQUE constraint failed: categories.name", ); assert_err( conn.client.execute( "INSERT INTO categories (name) VALUES (?)", [Option::<String>::None], ), ffi::SQLITE_CONSTRAINT_NOTNULL, "NOT NULL constraint failed: categories.name", ); assert_err( conn.client.execute( "INSERT INTO tasks (info) VALUES (?)", [Option::<String>::None], ), ffi::SQLITE_CONSTRAINT_NOTNULL, "NOT NULL constraint failed: tasks.info", ); assert_err( conn.client .execute("INSERT INTO categories (name) VALUES ('')", ()), ffi::SQLITE_CONSTRAINT_CHECK, "CHECK constraint failed: name != ''", ); assert_err( conn.client .execute("INSERT INTO tasks (info) VALUES ('')", ()), ffi::SQLITE_CONSTRAINT_CHECK, "CHECK constraint failed: info != ''", ); // assert!( // conn.client // .execute("INSERT INTO tasks (info, done) VALUES ('foo', ?)", [2],) // .is_err() // ); // // assert!( // conn.client // .execute( // "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)", // [Option::<String>::None] // ) // .is_ok() // ); // // assert!( // conn.client // .execute( // "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)", // ["111-1-1".to_string()] // ) // .is_err() // ); // // assert!( // conn.client // .execute( // "INSERT INTO tasks (info, due_date) VALUES ('bar', ?)", // ["2025-13-01".to_string()] // ) // .is_err() // ); } finish this test
     }
 
     fn get_test_conn() -> Conn {
@@ -518,3 +538,67 @@ mod tests {
 // // makee sujre to add category
 //
 // write alot of documentation
+//
+//
+//
+//
+// pub fn format_date(date: &str, today: &NaiveDate) -> Result<String, &'static str> {
+//     let cleaned = date.trim().replace("/", "-");
+//     let parts: Vec<_> = cleaned.trim().split('-').collect();
+//
+//     // let parse_part = |part: &str, msg| part.parse::<u32>().map_err(|_| msg);
+//     // let (y, m, d) = match parts.len() {
+//     //     3 => (
+//     //         Some(parse_part(parts[0], "Y-M-D invalid year")?),
+//     //         Some(parse_part(parts[1], "Y-M-D invalid month")?),
+//     //         Some(parse_part(parts[2], "Y-M-D invalid day")?),
+//     //     ),
+//     //     2 => (
+//     //         None,
+//     //         Some(parse_part(parts[0], "M-D invalid month")?),
+//     //         Some(parse_part(parts[1], "M-D invalid day")?),
+//     //     ),
+//     //     1 => (None, None, Some(parse_part(parts[0], "D invalid day")?)),
+//     //     _ => return Err("bad number of parts"),
+//     // };
+//     //
+//     Ok(cleaned)
+//
+//     // fn make_date(y: i32, m: u32, d: u32) -> Result<String, &'static str> {
+//     //     if let Some(date) = NaiveDate::from_ymd_opt(y, m, d) {
+//     //         Ok(date.format("%Y-%m-%d").to_string())
+//     //     } else {
+//     //         Err("unable to parse date")
+//     //     }
+//     // }
+//     //
+//     // match (y, m, d) {
+//     //     // wont work past 2100 :(, will fix then
+//     //     (Some(year), Some(month), Some(day)) => make_date(
+//     //         (if year < 100 { year + 2000 } else { year }) as i32,
+//     //         month,
+//     //         day,
+//     //     ),
+//     //     (None, Some(month), Some(day)) => {
+//     //         if month > today.month() || (month == today.month() && day >= today.day()) {
+//     //             make_date(today.year(), month, day)
+//     //         } else {
+//     //             make_date(today.year() + 1, month, day)
+//     //         }
+//     //     }
+//     //     (None, None, Some(day)) => {
+//     //         if day >= today.day() {
+//     //             make_date(today.year(), today.month(), day)
+//     //         } else {
+//     //             let today_month = today.month();
+//     //             let (new_year, new_month) = if today_month == 12 {
+//     //                 (today.year() + 1, 1)
+//     //             } else {
+//     //                 (today.year(), today_month + 1)
+//     //             };
+//     //             make_date(new_year, new_month, day)
+//     //         }
+//     //     }
+//     //     _ => Err("cannot parse the date"),
+//     // }
+// }
