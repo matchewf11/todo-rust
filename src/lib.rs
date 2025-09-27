@@ -56,7 +56,7 @@ enum PartialDateError {
 }
 
 impl PartialDate {
-    fn build(date_str: &str) -> Result<PartialDate, PartialDateError> {
+    fn build(date_str: &str) -> Result<Self, PartialDateError> {
         let cleaned_date = date_str.trim().replace('/', "-");
         let parts: Vec<_> = cleaned_date.split('-').collect();
         Ok(match parts.as_slice() {
