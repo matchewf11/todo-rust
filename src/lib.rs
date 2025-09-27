@@ -40,65 +40,132 @@ impl Conn {
     }
 }
 
-// #[derive(Debug, PartialEq)]
-// struct DateError(usize);
-//
-// fn format_date(date: &str, today: &NaiveDate) -> Result<String, DateError> {
-//     let cleaned_date = date.trim().replace("/", "-");
-//     let parts: Vec<_> = cleaned_date.split('-').collect();
-//
-//     match parts.len() {
-//         1 => {
-//             if parts[0].is_empty() {
-//                 return Err(DateError(0));
-//             } else {
-//                 println!("size of 1")
-//             }
-//         }
-//         2 => println!("size of 2"),
-//         3 => println!("size of 3"),
-//         n => return Err(DateError(n)),
-//     }
-//
-//     Ok(cleaned_date)
-// }
+#[derive(Debug, PartialEq)]
+enum PartialDate {
+    Day { day: u32 },
+    MonthDay { month: u32, day: u32 },
+    YearMonthDay { year: u32, month: u32, day: u32 },
+}
 
-// fn split_date(date: &str) -> (Option<&str>, Option<&str>, Option<&str>) {
-//     // do something
-// }
+#[derive(Debug, PartialEq)]
+enum PartialDateError {
+    YearError(String),
+    MonthError(String),
+    DayError(String),
+    PartError(String),
+}
+
+impl PartialDate {
+    fn build(date_str: &str) -> Result<PartialDate, PartialDateError> {
+        let cleaned_date = date_str.trim().replace('/', "-");
+        let parts: Vec<_> = cleaned_date.split('-').collect();
+        Ok(match parts.as_slice() {
+            [y, m, d] => Self::YearMonthDay {
+                year: y
+                    .parse()
+                    .map_err(|_| PartialDateError::YearError(y.to_string()))?,
+                month: m
+                    .parse()
+                    .map_err(|_| PartialDateError::MonthError(m.to_string()))?,
+                day: d
+                    .parse()
+                    .map_err(|_| PartialDateError::DayError(d.to_string()))?,
+            },
+            [m, d] => Self::MonthDay {
+                month: m
+                    .parse()
+                    .map_err(|_| PartialDateError::MonthError(m.to_string()))?,
+                day: d
+                    .parse()
+                    .map_err(|_| PartialDateError::DayError(d.to_string()))?,
+            },
+            [d] => Self::Day {
+                day: d
+                    .parse()
+                    .map_err(|_| PartialDateError::DayError(d.to_string()))?,
+            },
+            _ => Err(PartialDateError::PartError(cleaned_date))?,
+        })
+    }
+}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::{Error::SqliteFailure, Result, ffi};
 
-    // #[test]
-    // fn test_date_parts_lens() {
-    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
-    //     assert_eq!(Err(DateError(0)), format_date("  ", &today));
-    //     assert_eq!(Err(DateError(4)), format_date("1-1-1-1", &today));
-    //     assert!(format_date("1-1-1", &today).is_ok());
-    //     assert!(format_date("1-1", &today).is_ok());
-    //     assert!(format_date("1", &today).is_ok());
-    // }
-    //
-    // #[test]
-    // fn test_date_replace() {
-    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
-    //     assert_eq!(
-    //         format_date("2025/09/26", &today).unwrap(),
-    //         "2025-09-26".to_string()
-    //     )
-    // }
-    //
-    // #[test]
-    // fn test_date_trim() {
-    //     let today = NaiveDate::from_ymd_opt(2025, 9, 26).unwrap();
-    //     assert_eq!(
-    //         format_date(" \n 2025-09-26  \n ", &today).unwrap(),
-    //         "2025-09-26".to_string()
-    //     )
-    // }
+    #[test]
+    fn test_partial_date() {
+        // sanity
+        assert_eq!(
+            PartialDate::build("2024-02-12").unwrap(),
+            PartialDate::YearMonthDay {
+                year: 2024,
+                month: 2,
+                day: 12,
+            }
+        );
+
+        // trim
+        assert_eq!(
+            PartialDate::build("    2024-02-12   \n ").unwrap(),
+            PartialDate::YearMonthDay {
+                year: 2024,
+                month: 2,
+                day: 12,
+            }
+        );
+
+        // replacement
+        assert_eq!(
+            PartialDate::build("2024/02/12").unwrap(),
+            PartialDate::YearMonthDay {
+                year: 2024,
+                month: 2,
+                day: 12,
+            }
+        );
+
+        // 0 parts
+        assert_eq!(
+            PartialDate::build("   "),
+            Err(PartialDateError::DayError("".to_string())),
+        );
+
+        // 1 part
+        assert_eq!(
+            PartialDate::build("22").unwrap(),
+            PartialDate::Day { day: 22 }
+        );
+
+        // 2 thing
+        assert_eq!(
+            PartialDate::build("02-22").unwrap(),
+            PartialDate::MonthDay { month: 2, day: 22 }
+        );
+
+        // 3 thing
+        assert_eq!(
+            PartialDate::build("2024-02-22").unwrap(),
+            PartialDate::YearMonthDay {
+                year: 2024,
+                month: 2,
+                day: 22
+            }
+        );
+
+        // 4 thing
+        assert_eq!(
+            PartialDate::build("20-20-20-20"),
+            Err(PartialDateError::PartError("20-20-20-20".to_string())),
+        );
+
+        // test invalid part
+        assert_eq!(
+            PartialDate::build("20-20-hello"),
+            Err(PartialDateError::DayError("hello".to_string())),
+        );
+    }
 
     fn assert_err<T>(res: Result<T>, err_code: i32, err_msg: &str) {
         match res {
