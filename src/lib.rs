@@ -44,7 +44,7 @@ impl Conn {
 enum PartialDate {
     Day { day: u32 },
     MonthDay { month: u32, day: u32 },
-    YearMonthDay { year: u32, month: u32, day: u32 },
+    YearMonthDay { year: i32, month: u32, day: u32 },
 }
 
 #[derive(Debug, PartialEq)]
@@ -89,10 +89,55 @@ impl PartialDate {
     }
 }
 
+#[derive(Debug)]
+struct DateError;
+
+fn make_date(partial_date: &PartialDate, today: &NaiveDate) -> Result<String, DateError> {
+    Ok(match partial_date {
+        PartialDate::YearMonthDay { year, month, day } => {
+            if *year >= 1000 {
+                chrono::NaiveDate::from_ymd_opt(*year, *month, *day)
+                    .ok_or(DateError)?
+                    .to_string()
+            } else if *year >= 100 {
+                unimplemented!()
+            } else if *year >= 10 {
+                unimplemented!()
+            } else if *year >= 0 {
+                unimplemented!()
+            } else {
+                unimplemented!()
+            }
+        }
+        PartialDate::MonthDay { month, day } => unimplemented!(),
+        PartialDate::Day { day } => unimplemented!(),
+    })
+
+    // make sure to add the leading 0 thing
+    // 2001-01-11
+    // handle invalid numbers
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use rusqlite::{Error::SqliteFailure, Result, ffi};
+
+    #[test]
+    fn test_make_date() {
+        assert_eq!(
+            make_date(
+                &PartialDate::YearMonthDay {
+                    year: 2021,
+                    month: 12,
+                    day: 1
+                },
+                &NaiveDate::from_ymd_opt(2021, 12, 1).unwrap(),
+            )
+            .unwrap(),
+            "2021-12-01".to_string(),
+        )
+    }
 
     #[test]
     fn test_partial_date() {
